@@ -15,9 +15,21 @@ st.set_page_config(
     page_title=f"{APP_ICON} {APP_NAME}",
     page_icon="⚓",
     layout="centered",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
+
+# ── Ocultar sidebar nativa de Streamlit (pages/) cuando no hay sesión ──
+HIDE_SIDEBAR_CSS = """
+<style>
+    [data-testid="stSidebar"] { display: none; }
+    [data-testid="stSidebarCollapsedControl"] { display: none; }
+    [data-testid="stSidebarNav"] { display: none; }
+    section[data-testid="stSidebar"] { display: none; }
+    button[kind="header"] { display: none; }
+</style>
+"""
+
 db.init_db()
 
 PAGE_MAP = {
@@ -70,10 +82,12 @@ def _needs_pasaporte():
 
 # ── FLUJO ──
 if not st.session_state.get("logged_in"):
+    st.markdown(HIDE_SIDEBAR_CSS, unsafe_allow_html=True)
     _show_login()
     st.stop()
 
 if _needs_pasaporte():
+    st.markdown(HIDE_SIDEBAR_CSS, unsafe_allow_html=True)
     with st.sidebar:
         st.markdown(f"## {APP_ICON} {APP_NAME}")
         st.caption(f"👤 {st.session_state.get('user_name','')}")
