@@ -5,8 +5,12 @@ Todas las tablas, seed data, y operaciones CRUD
 Conexión:
   - Si TURSO_DATABASE_URL está definida → conecta a Turso Cloud
   - Si no → usa SQLite local (data/itaca.db) como fallback para desarrollo
+
+Optimización:
+  - Conexión singleton (no se reconecta en cada operación)
+  - sync() solo después de escrituras, no en cada lectura
 """
-import json, os
+import json, os, threading
 from datetime import datetime, timedelta, date
 from contextlib import contextmanager
 
@@ -23,16 +27,26 @@ if USE_TURSO:
 else:
     import sqlite3
 
+# ── Conexión singleton (se reutiliza en toda la app) ──
+_conn = None
+_lock = threading.Lock()
 
-def _connect():
-    """Crea una conexión a Turso Cloud o SQLite local."""
-    if USE_TURSO:
-        conn = libsql.connect("itaca-replica.db", sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
-        conn.sync()
-        return conn
-    else:
-        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-        return sqlite3.connect(DB_PATH)
+
+def _get_connection():
+    """Obtiene o crea la conexión singleton."""
+    global _conn
+    if _conn is not None:
+        return _conn
+    with _lock:
+        if _conn is not None:
+            return _conn
+        if USE_TURSO:
+            _conn = libsql.connect("itaca-replica.db", sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
+            _conn.sync()
+        else:
+            os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+            _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    return _conn
 
 
 class _Row(dict):
@@ -84,26 +98,29 @@ class _DictCursor:
 class _DbWrapper:
     """
     Proxy alrededor de la conexión raw que:
-    - Para SELECT → usa _DictCursor y devuelve dicts
-    - Para INSERT/UPDATE/DELETE → delega directo a conn.execute()
-    - Soporta commit() y executescript() (solo SQLite local)
+    - Para SELECT → usa _DictCursor y devuelve dicts (sin sync)
+    - Para INSERT/UPDATE/DELETE → delega directo + marca escritura
+    - sync() solo al hacer commit después de escrituras
     """
     def __init__(self, conn):
         self._conn = conn
         self._dict = _DictCursor(conn)
+        self._has_writes = False
 
     def execute(self, sql, params=None):
         sql_upper = sql.strip().upper()
-        if sql_upper.startswith("SELECT") or sql_upper.startswith("WITH"):
+        is_read = sql_upper.startswith("SELECT") or sql_upper.startswith("WITH")
+        if is_read:
             return self._dict.execute(sql, params)
+        self._has_writes = True
         if params:
             return self._conn.execute(sql, params)
         return self._conn.execute(sql)
 
     def executescript(self, sql):
-        """Ejecutar múltiples sentencias — solo funciona con sqlite3 local."""
+        """Ejecutar múltiples sentencias."""
+        self._has_writes = True
         if USE_TURSO:
-            # Turso no soporta executescript: dividir y ejecutar una por una
             for stmt in sql.split(";"):
                 stmt = stmt.strip()
                 if stmt:
@@ -113,19 +130,21 @@ class _DbWrapper:
 
     def commit(self):
         self._conn.commit()
-        if USE_TURSO:
+        # Solo sincronizar con Turso si hubo escrituras (gran ahorro de tiempo)
+        if USE_TURSO and self._has_writes:
             self._conn.sync()
+            self._has_writes = False
 
 
 @contextmanager
 def get_db():
-    conn = _connect()
+    conn = _get_connection()
     wrapper = _DbWrapper(conn)
     try:
         yield wrapper
         wrapper.commit()
-    finally:
-        conn.close()
+    except Exception:
+        raise
 
 
 def dict_row(row):
@@ -146,7 +165,12 @@ def dict_rows(rows):
 # ═══════════════════════════════════════════
 # CREAR TABLAS
 # ═══════════════════════════════════════════
+_db_initialized = False
+
 def init_db():
+    global _db_initialized
+    if _db_initialized:
+        return
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     with get_db() as db:
         db.executescript("""
@@ -439,6 +463,7 @@ def init_db():
 
         """)
     seed_data()
+    _db_initialized = True
 
 # ═══════════════════════════════════════════
 # SEED DATA
