@@ -31,6 +31,8 @@ else:
 _conn = None
 _lock = threading.Lock()
 
+# ── IMPORTACIÓN DE SEGURIDAD PARA CONTRASEÑAS ──
+from werkzeug.security import generate_password_hash, check_password_hash
 
 def _get_connection():
     """Obtiene o crea la conexión singleton."""
@@ -474,10 +476,12 @@ def seed_data():
         if c > 0:
             return
         now = datetime.now().isoformat()
+        
+        # Generamos el hash para la contraseña por defecto de los usuarios semilla
+        default_hash = generate_password_hash('Itaca2026!')
+
         # ═══════════════════════════════════════════════════════
         # 90 COLABORADORES REALES DE ÍTACA HUB
-        # Fuente: BD MAESTRA (Excel), Febrero 2026
-        # Formato: (email, nombre, rol, estado, unidad, email_lider, cargo, celular, ingreso)
         # ═══════════════════════════════════════════════════════
         users = [
             ("oscar.bereche@itaca.com","Oscar Sebastián García Bereche","Colaborador","Activo","321 SHOW","francisco.orellano@itaca.com","Videógrafo","974585296","2021-03-15"),
@@ -569,11 +573,12 @@ def seed_data():
         for u in users:
             email, nombre, rol, estado, unidad, email_lider, cargo, cel, ingreso = u
             db.execute("INSERT OR IGNORE INTO usuarios VALUES (?,?,?,?,?,?,?,?,?)",
-                (email, nombre, rol, estado, unidad, email_lider, now, now, 'Itaca2026!'))
+                (email, nombre, rol, estado, unidad, email_lider, now, now, default_hash))
             db.execute("""INSERT OR IGNORE INTO identidad
                 (email,nombre,puesto,rol,unidad,estado,email_lider,telefono,fecha_ingreso,fecha_actualizacion)
                 VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 (email, nombre, cargo, rol, unidad, estado, email_lider, cel, ingreso, now))
+        
         # Algunos check-ins de ejemplo
         for i, email in enumerate(["astrid.vivas@itaca.com","grecia.elera@itaca.com","daniela.collantes@itaca.com"]):
             for w in range(4):
@@ -585,6 +590,7 @@ def seed_data():
                 db.execute("INSERT OR IGNORE INTO checkins VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (cid, email, estados[w], estres[w], "Trabajo", "Concentrado,Determinado",
                      "", d.isoformat(), sem, 1 if estres[w]>=4 else 0))
+        
         # Faros de ejemplo con colaboradores reales
         faros_data = [
             ("astrid.vivas@itaca.com","Astrid Adanai Ramos Vivas","mirai.coronado@itaca.com","Mirai Nishimura Coronado","Faro de Valor","ITACTIVIDAD","Ardilla","Gracias por resolver el tema de contratos sin que nadie te lo pidiera. Eso es ITACTIVIDAD pura."),
@@ -597,6 +603,7 @@ def seed_data():
             db.execute("INSERT OR IGNORE INTO faros VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (fid, f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7], "",
                  d.isoformat(), "Aprobado", "mirai@itaca.com", d.isoformat(), 0, 1))
+        
         # Badge de ejemplo
         db.execute("INSERT OR IGNORE INTO logros VALUES (?,?,?,?,?,?,?,?,?)",
             ("LOGRO_pedro_firstfaro", "pedro@itaca.com", "FIRST_FARO", "🔦 Primer Faro",
@@ -767,7 +774,7 @@ def seed_data():
                 ("KIDS PIURA","ITACA FAN","Comunicar reunión para agendar","MATTIAS","","Terminado",100),
                 ("KIDS PIURA","ITACA FAN","Estandarizar la ruta de \"Huellas Familiares\"","MATTIAS","","Terminado",100),
                 ("KIDS PIURA","LIDERAZGO EMOCIONALMENTE COMPETENTE","Entrega de polos a entrenadores","MATTIAS, ASTRID","","Terminado",100),
-                ("KIDS PIURA","LIDERAZGO EMOCIONALMENTE COMPETENTE","Establecer los \"Do y Dont\'s\" con el equipo","MATTIAS, NADIA, ASTRID","","Terminado",100),
+                ("KIDS PIURA","LIDERAZGO EMOCIONALMENTE COMPETENTE","Establecer los \"Do y Dont's\" con el equipo","MATTIAS, NADIA, ASTRID","","Terminado",100),
                 ("KIDS PIURA","LIDERAZGO EMOCIONALMENTE COMPETENTE","Crear el programa de Capacitación","MATTIAS, NADIA","","Terminado",100),
                 ("KIDS PIURA","LIDERAZGO EMOCIONALMENTE COMPETENTE","Comunicar al equipo la agenda de capas","MATTIAS","","Terminado",100),
                 ("KIDS PIURA","SOSTENIBILIDAD ECONÓMICA Y LEGAL","Preparar presentación institucional o propuesta de valor","ASTRID, NADIA","","Terminado",100),
@@ -1662,18 +1669,20 @@ def get_analytics():
 
 def update_password(email, new_password):
     """Actualizar contraseña de un usuario"""
+    hashed_password = generate_password_hash(new_password)
     with get_db() as db:
-        db.execute("UPDATE usuarios SET password=? WHERE email=?", (new_password, email))
+        db.execute("UPDATE usuarios SET password=? WHERE email=?", (hashed_password, email))
 
 def add_colaborador(email, nombre, rol, unidad, email_lider, cargo, telefono, fecha_ingreso):
     """Agregar un nuevo colaborador (desde panel admin)"""
     now = datetime.now().isoformat()
+    default_hash = generate_password_hash('Itaca2026!')
     with get_db() as conn:
         existing = conn.execute("SELECT 1 FROM usuarios WHERE email=?", (email,)).fetchone()
         if existing:
             return False, "Ya existe un usuario con ese email."
         conn.execute("INSERT INTO usuarios VALUES (?,?,?,?,?,?,?,?,?)",
-            (email, nombre, rol, "Activo", unidad, email_lider, now, now, "Itaca2026!"))
+            (email, nombre, rol, "Activo", unidad, email_lider, now, now, default_hash))
         conn.execute("""INSERT INTO identidad
             (email,nombre,puesto,rol,unidad,estado,email_lider,telefono,fecha_ingreso,fecha_actualizacion)
             VALUES (?,?,?,?,?,?,?,?,?,?)""",
@@ -1711,8 +1720,9 @@ def update_colaborador(email, **kwargs):
 
 def reset_password(email):
     """Resetear contraseña a la default"""
+    default_hash = generate_password_hash('Itaca2026!')
     with get_db() as conn:
-        conn.execute("UPDATE usuarios SET password='Itaca2026!' WHERE email=?", (email,))
+        conn.execute("UPDATE usuarios SET password=? WHERE email=?", (default_hash, email))
     return True, "Contraseña reseteada a Itaca2026!"
 
 def get_all_users_admin():
@@ -1828,8 +1838,8 @@ def get_flight_risk():
     """
     🔮 ORÁCULO DE FUGAS (Flight Risk):
     Condición: estrés promedio >= 4 (últimas 2 semanas)
-               AND 0 faros (enviados+recibidos) último mes
-               AND > 2 tareas vencidas
+                AND 0 faros (enviados+recibidos) último mes
+                AND > 2 tareas vencidas
     """
     hoy = datetime.now()
     hace_14d = (hoy - timedelta(days=14)).isoformat()
@@ -2300,7 +2310,7 @@ def save_eval_360_v2(periodo_id, email_evaluado, email_evaluador, unidad, es_aut
     eid = f"E360V2_{int(datetime.now().timestamp()*1000)}"
     prom_pilares = round((pilar_itactividad + pilar_mas1 + pilar_confianza) / 3, 2)
     prom_hex = round((hex_vision + hex_planificacion + hex_encaje +
-                      hex_entrenamiento + hex_evaluacion + hex_reconocimiento) / 6, 2) if evalua_hexagono else 0.0
+                       hex_entrenamiento + hex_evaluacion + hex_reconocimiento) / 6, 2) if evalua_hexagono else 0.0
     prom_ie = round((ie_auto + ie_autor + ie_motiv + ie_empatia + ie_social) / 5, 2)
     prom_total = round((prom_pilares + prom_hex + prom_ie) / 3, 2) if evalua_hexagono else round((prom_pilares + prom_ie) / 2, 2)
     with get_db() as db:
