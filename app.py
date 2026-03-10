@@ -3,6 +3,7 @@
 """
 import streamlit as st
 import sys, os, importlib
+from werkzeug.security import check_password_hash # NUEVO: Importación para seguridad
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 if ROOT_DIR not in sys.path:
@@ -63,9 +64,10 @@ def _show_login():
             if not email or not password:
                 st.error("Ingresa tu correo y contraseña."); return
             user = db.get_user(email)
-            if not user:                          st.error("❌ Usuario no encontrado.");  return
-            if user.get("password") != password:  st.error("❌ Contraseña incorrecta."); return
-            if user.get("estado") != "Activo":    st.error("❌ Cuenta inactiva."); return
+            if not user:                                  st.error("❌ Usuario no encontrado.");  return
+            # NUEVO: Validación segura de contraseña
+            if not check_password_hash(user.get("password"), password):  st.error("❌ Contraseña incorrecta."); return
+            if user.get("estado") != "Activo":            st.error("❌ Cuenta inactiva."); return
             st.session_state.logged_in    = True
             st.session_state.current_user = email
             st.session_state.user_rol     = user["rol"]
@@ -101,8 +103,9 @@ if _needs_pasaporte():
         from pages.pasaporte import render as render_pasaporte
         render_pasaporte()
     except Exception as e:
-        st.error(f"Error cargando Pasaporte: {e}")
-        import traceback; st.code(traceback.format_exc())
+        # NUEVO: Mensaje de error amigable, se oculta el traceback al usuario
+        st.error("Ups, ocurrió un error inesperado al cargar el Pasaporte. Por favor, contacta a soporte.")
+        print(f"Error interno cargando Pasaporte: {e}")
     st.stop()
 
 from components.sidebar import render_sidebar
@@ -115,7 +118,8 @@ if module_name:
         mod = importlib.import_module(module_name)
         mod.render()
     except Exception as e:
-        st.error(f"Error cargando '{page}': {e}")
-        import traceback; st.code(traceback.format_exc())
+        # NUEVO: Mensaje de error amigable, se oculta el traceback al usuario
+        st.error("Ups, ocurrió un error inesperado al cargar esta sección. Por favor, intenta de nuevo o contacta a soporte.")
+        print(f"Error interno cargando '{page}': {e}")
 else:
     st.error(f"Página no encontrada: {page}")
